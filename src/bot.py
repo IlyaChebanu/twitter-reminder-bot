@@ -2,6 +2,7 @@ import json
 import re
 import time as t
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 import utils
 
 class Bot:
@@ -21,6 +22,7 @@ class Bot:
         else:
             self.last_id = 1
         self.conn.commit()
+
 
     def analyze_tweet_data(self, tweet):
         remind_pattern = r'\[.+\]'
@@ -44,7 +46,6 @@ class Bot:
         if coordinates:
             due_datetime = self.utc_time(coordinates, due_datetime)
 
-
         return tweet_id, reminder, due_datetime
 
 
@@ -67,26 +68,46 @@ class Bot:
         return str(offset_time)
 
 
+    def reply_tweet(self, tweet_id, time):
+        post_url = "https://api.twitter.com/1.1/statuses/update.json"
+
+        msg = "Created reminder for UTC {}, delete tweet to cancel."
+        formatted_msg = msg.format(tweet_time)
+        encoded_msg = urlencode({"status": formatted_msg})
+
+        response, data = client.request("{}?in_reply_to_status_id={}&{}".format(
+            post_url, tweet_id, encoded_msg
+        ), method="POST")
+
+        return response, data
+
+
     def listen(self):
         while True:
             client = utils.oauth_client(*utils.get_credentials(self.conn))
             mention_url = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
-            response, data = client.request("{}?since_id={}".format(mention_url, self.last_id + 1))
+            response, tweets = client.request("{}?since_id={}".format(
+                mention_url, self.last_id + 1
+            ))
 
             print(response, '\n\n')
-            data = json.loads(data.decode("latin-1"))
-            for i, tweet in enumerate(data):
+            tweets = json.loads(tweets.decode("latin-1"))
+            for i, tweet in enumerate(tweets):
                 print(i, ": ", tweet, "\n\n")
 
                 try:
                     tweet_id, tweet_text, tweet_time = self.analyze_tweet_data(tweet)
                     self.last_id = tweet_id
 
-                    self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
-                        (tweet_id, tweet_text, tweet_time))
-                    self.conn.commit()
-                except:
-                    pass
+                    time_now = datetime.utcnow()
+                    requested_time = datetime.strptime(tweet_time, "%Y-%m-%d %H:%M:%S")
 
+                    if requested_time > time_now: # Prevent reminders for the past
+                        self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
+                            (tweet_id, tweet_text, tweet_time))
+                        self.conn.commit()
+                        reply_tweet(tweet_id, tweet_time)
+                except:
+                    pass # Invalid request syntax
 
             t.sleep(30)

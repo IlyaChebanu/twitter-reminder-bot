@@ -35,6 +35,6 @@ def get_maps_key(conn):
     return query_result
 
 def date_dmy_to_ymd(date):
-    split_date = re.split("[.-/]", date)
+    split_date = re.split("[.\-/]", date)
     ymd_date = "-".join(split_date[::-1])
     return ymd_date
