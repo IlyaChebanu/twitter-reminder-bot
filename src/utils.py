@@ -1,6 +1,7 @@
 import os, re
-import psycopg2, oauth2
+import psycopg2, oauth2, json
 from urllib.parse import urlparse
+from datetime import datetime
 
 TZ_URL = 'https://maps.googleapis.com/maps/api/timezone/json'
 
@@ -34,7 +35,16 @@ def get_maps_key(conn):
     query_result = cursor.fetchone()[0]
     return query_result
 
-def date_dmy_to_ymd(date):
-    split_date = re.split("[.\-/]", date)
-    ymd_date = "-".join(split_date[::-1])
-    return ymd_date
+# converts day month (year) date to YYYY-MM-DD
+def convert_date(date):
+    # separate numbers with spaces eg: 02 07 2017
+    date = re.sub("[-./]", " ", date[0])
+    try:
+        # Will fail if year was not passed
+        date = datetime.strptime(date, "%d %m %Y")
+    except:
+        date = datetime.strptime(date, "%d %m")
+    return str(date)
+
+def toJSON(msg):
+    return json.loads(msg.decode('latin-1'))

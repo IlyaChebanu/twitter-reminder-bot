@@ -1,5 +1,4 @@
-import json
-import re
+import re, threading
 import time as t
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -14,33 +13,44 @@ class Bot:
                           Tweets(id BIGINT NOT NULL, \
                                  reminder VARCHAR NOT NULL, \
                                  due TIMESTAMP NOT NULL);")
+
+        # Get last reminder ID so listener doesn't pull tweets already in db
         self.cur.execute("SELECT Max(id) FROM Tweets;")
         query_result = self.cur.fetchone()[0]
-        print(query_result)
+
         if query_result:
             self.last_id = query_result + 1
         else:
             self.last_id = 1
+
         self.conn.commit()
 
 
     def analyze_tweet_data(self, tweet):
         remind_pattern = r'\[.+\]'
-        time_pattern = r'\b(?:[01]\d|2[0-4]):[0-5]\d\b'
-        date_pattern = r'\b(?:[0-2]\d|3[01])(?:-|.|\/)(?:0\d|1[0-2])(?:-|.|\/)20[1-9]\d\b'
+        time_pattern = r'\b(?:[01]{0,1}\d|2[0-4]):[0-5]\d\b'
+        date_pattern = r'\b(?:[0-2]{0,1}\d|3[01])[-./](?:0{0,1}\d|1[0-2])(?:[-./]20[1-9]\d|)\b'
 
         tweet_id = tweet['id']
         tweet_text = tweet['text']
 
+        # Find text enclosed in brackets
+        # if tweet does not contain it an exception is thrown (indexing None)
         reminder = re.findall(remind_pattern, tweet_text)[0]
         reminder = reminder.strip("[").strip("]").strip() # Strip the brackets
 
-        due_date = re.findall(date_pattern, tweet_text)[0]
-        conv_date = utils.date_dmy_to_ymd(due_date) # Convert to YYYY-MM-DD
+        # Find the date
+        due_date = re.findall(date_pattern, tweet_text)
+        if not due_date: # If date was ommitted
+            due_date = str(datetime.utcnow().date()) # Use today's date
+        else:
+            due_date = convert_date(due_date[0])
 
+        # Find the time, if time not specified this throws an exception
         due_time = re.findall(time_pattern, tweet_text)[0]
 
-        due_datetime = "{} {}".format(conv_date, due_time)
+        # Convert to postgresql timestamp format
+        due_datetime = "{} {}".format(due_date, due_time)
 
         coordinates = tweet['place']['bounding_box']['coordinates'][0][0]
         if coordinates:
@@ -53,28 +63,28 @@ class Bot:
         timestamp = t.time()
         client = utils.oauth_client(*utils.get_credentials(self.conn))
 
+        # Maps API timezone data request
         response, tz = client.request(
             "{}?location={},{}&timestamp={}&key={}".format(
                 utils.TZ_URL, coord[1], coord[0], timestamp, utils.get_maps_key(self.conn)
             )
         )
-        tz = json.loads(tz.decode('latin-1'))
+        tz = utils.toJSON(tz)
 
         tz_offset = tz['dstOffset'] + tz['rawOffset']
 
         offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M")
-        offset_time += timedelta(seconds=tz_offset)
+        offset_time -= timedelta(seconds=tz_offset)
 
         return str(offset_time)
 
 
-    def reply_tweet(self, tweet_id, time):
+    def reply_tweet(self, tweet_id, msg):
         post_url = "https://api.twitter.com/1.1/statuses/update.json"
 
-        msg = "Created reminder for UTC {}, delete tweet to cancel."
-        formatted_msg = msg.format(tweet_time)
-        encoded_msg = urlencode({"status": formatted_msg})
+        encoded_msg = urlencode({"status": msg})
 
+        client = utils.oauth_client(*utils.get_credentials(self.conn))
         response, data = client.request("{}?in_reply_to_status_id={}&{}".format(
             post_url, tweet_id, encoded_msg
         ), method="POST")
@@ -84,20 +94,20 @@ class Bot:
 
     def listen(self):
         while True:
-            client = utils.oauth_client(*utils.get_credentials(self.conn))
             mention_url = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
+            client = utils.oauth_client(*utils.get_credentials(self.conn))
+            # Get all new mentions
             response, tweets = client.request("{}?since_id={}".format(
                 mention_url, self.last_id + 1
             ))
+            tweets = utils.toJSON(tweets)
 
-            print(response, '\n\n')
-            tweets = json.loads(tweets.decode("latin-1"))
-            for i, tweet in enumerate(tweets):
-                print(i, ": ", tweet, "\n\n")
-
+            for tweet in tweets:
                 try:
+                    # Throws exceptions if pattern isn't matched
                     tweet_id, tweet_text, tweet_time = self.analyze_tweet_data(tweet)
-                    self.last_id = tweet_id
+                    if tweet_id > self.last_id:
+                        self.last_id = tweet_id
 
                     time_now = datetime.utcnow()
                     requested_time = datetime.strptime(tweet_time, "%Y-%m-%d %H:%M:%S")
@@ -106,8 +116,49 @@ class Bot:
                         self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
                             (tweet_id, tweet_text, tweet_time))
                         self.conn.commit()
-                        reply_tweet(tweet_id, tweet_time)
+
+                        msg = "Created reminder for UTC {}, delete tweet to cancel."
+                        formatted_msg = msg.format(tweet_time)
+                        self.reply_tweet(tweet_id, formatted_msg)
                 except:
                     pass # Invalid request syntax
+            t.sleep(15)
 
+
+    def remind(self):
+        while True:
+            # Select due reminders
+            self.cur.execute("SELECT id, reminder FROM Tweets WHERE now() > due;")
+            due_tweets = self.cur.fetchall()
+
+            for tweet in due_tweets:
+                tweet_id = tweet[0]
+                tweet_msg = tweet[1]
+
+                client = utils.oauth_client(*utils.get_credentials(self.conn))
+                # Check if tweet still exists
+                response, data = client.request("https://api.twitter.com/1.1/statuses/show.json?id=" + str(tweet_id))
+                data = utils.toJSON(data)
+                if "errors" in data: # if error in data tweet was deleted
+                    self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
+                    self.conn.commit()
+                else:
+                    msg = "Reminder: {}".format(tweet_msg)
+                    response, data = self.reply_tweet(tweet_id, msg)
+                    if response.status == 200:
+                        self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
+                        self.conn.commit()
             t.sleep(30)
+
+    def run(self):
+        # Thread the two functions to concurrently
+        listen_thread = threading.Thread(target=self.listen)
+        listen_thread.daemon = True
+        listen_thread.start()
+
+        remind_thread = threading.Thread(target=self.remind)
+        remind_thread.daemon = True
+        remind_thread.start()
+
+        while True:
+            pass # Prevent the program from closing itself immediately

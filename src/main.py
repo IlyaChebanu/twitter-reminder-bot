@@ -27,7 +27,7 @@ def initial_setup():
 def start_bot():
     print("Starting bot")
     bot = Bot(conn)
-    bot.listen()
+    bot.run()
 
 def main():
     parser = argparse.ArgumentParser(description='Twitter reminder bot.')
