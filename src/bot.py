@@ -36,27 +36,37 @@ class Bot:
 
         # Find text enclosed in brackets
         # if tweet does not contain it an exception is thrown (indexing None)
-        reminder = re.findall(remind_pattern, tweet_text)[0]
-        reminder = reminder.strip("[").strip("]").strip() # Strip the brackets
+        reminder = re.findall(remind_pattern, tweet_text)
+        if reminder:
+            reminder = reminder[0].strip("[").strip("]").strip() # Strip the brackets
 
         # Find the date
         due_date = re.findall(date_pattern, tweet_text)
-        if not due_date: # If date was ommitted
+        if not due_date: # If date was omitted
             due_date = str(datetime.utcnow().date()) # Use today's date
         else:
             due_date = convert_date(due_date[0])
 
-        # Find the time, if time not specified this throws an exception
-        due_time = re.findall(time_pattern, tweet_text)[0]
+        # Find the time
+        due_datetime = None # Remains none if a time wasn't passed
+        due_time = re.findall(time_pattern, tweet_text)
+        if due_time:
+            due_time = due_time[0]
+            if due_time.count(":") == 1: # if only one : in time, seconds were omitted
+                due_time = due_time + ":00"
+            # Convert to postgresql timestamp format
+            due_datetime = "{} {}".format(due_date, due_time)
 
-        # Convert to postgresql timestamp format
-        due_datetime = "{} {}".format(due_date, due_time)
 
-        coordinates = tweet['place']['bounding_box']['coordinates'][0][0]
+
+        # Get coordinates for the timezone offset
+        has_coordinates = False
+        coordinates = tweet['place']['bounding_box']['coordinates']
         if coordinates:
-            due_datetime = self.utc_time(coordinates, due_datetime)
+            due_datetime = self.utc_time(coordinates[0][0], due_datetime)
+            has_coordinates = True
 
-        return tweet_id, reminder, due_datetime
+        return tweet_id, reminder, due_datetime, has_coordinates
 
 
     def utc_time(self, coord, time):
@@ -103,25 +113,30 @@ class Bot:
             tweets = utils.toJSON(tweets)
 
             for tweet in tweets:
-                try:
-                    # Throws exceptions if pattern isn't matched
-                    tweet_id, tweet_text, tweet_time = self.analyze_tweet_data(tweet)
-                    if tweet_id > self.last_id:
-                        self.last_id = tweet_id
+                tweet_id, tweet_text, tweet_time, coordinates = self.analyze_tweet_data(tweet)
+                if tweet_id > self.last_id:
+                    self.last_id = tweet_id
 
-                    time_now = datetime.utcnow()
-                    requested_time = datetime.strptime(tweet_time, "%Y-%m-%d %H:%M:%S")
+                if not tweet_text or not tweet_time:
+                    continue # Skip the tweet if text or time wasn't passed
 
-                    if requested_time > time_now: # Prevent reminders for the past
-                        self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
-                            (tweet_id, tweet_text, tweet_time))
-                        self.conn.commit()
+                time_now = datetime.utcnow()
+                # Convert to datetime format for comparison
+                requested_time = datetime.strptime(tweet_time, "%Y-%m-%d %H:%M:%S")
 
-                        msg = "Created reminder for UTC {}, delete tweet to cancel."
-                        formatted_msg = msg.format(tweet_time)
-                        self.reply_tweet(tweet_id, formatted_msg)
-                except:
-                    pass # Invalid request syntax
+                if requested_time > time_now: # Prevent reminders for the past
+                    self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
+                        (tweet_id, tweet_text, tweet_time))
+                    self.conn.commit()
+
+                    msg = ""
+                    if coordinates:
+                        msg = "Created reminder using geolocation for UTC {}, delete tweet to cancel."
+                    else:
+                        msg = "Created reminder for UTC {}, delete tweet to cancel. (Warning: Tweet location was off, time may be different from your timezone)"
+                    formatted_msg = msg.format(tweet_time)
+                    self.reply_tweet(tweet_id, formatted_msg)
+
             t.sleep(15)
 
 
