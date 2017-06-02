@@ -34,18 +34,23 @@ class Bot:
         tweet_id = tweet['id']
         tweet_text = tweet['text']
 
+        # Find the username
+        username = "@" + tweet['user']['screen_name']
+        # username = re.findall(username_pattern, tweet_text)[0]
+
         # Find text enclosed in brackets
         # if tweet does not contain it an exception is thrown (indexing None)
         reminder = re.findall(remind_pattern, tweet_text)
         if reminder:
             reminder = reminder[0].strip("[").strip("]").strip() # Strip the brackets
+            reminder = username + " " + reminder # Add the username to the reminder
 
         # Find the date
         due_date = re.findall(date_pattern, tweet_text)
         if not due_date: # If date was omitted
             due_date = str(datetime.utcnow().date()) # Use today's date
         else:
-            due_date = convert_date(due_date[0])
+            due_date = utils.convert_date(due_date[0])
 
         # Find the time
         due_datetime = None # Remains none if a time wasn't passed
@@ -63,10 +68,11 @@ class Bot:
         has_coordinates = False
         coordinates = tweet['place']['bounding_box']['coordinates']
         if coordinates:
+            print(due_datetime)
             due_datetime = self.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
 
-        return tweet_id, reminder, due_datetime, has_coordinates
+        return tweet_id, reminder, due_datetime, has_coordinates, username
 
 
     def utc_time(self, coord, time):
@@ -83,7 +89,7 @@ class Bot:
 
         tz_offset = tz['dstOffset'] + tz['rawOffset']
 
-        offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M")
+        offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S")
         offset_time -= timedelta(seconds=tz_offset)
 
         return str(offset_time)
@@ -95,8 +101,8 @@ class Bot:
         encoded_msg = urlencode({"status": msg})
 
         client = utils.oauth_client(*utils.get_credentials(self.conn))
-        response, data = client.request("{}?in_reply_to_status_id={}&{}".format(
-            post_url, tweet_id, encoded_msg
+        response, data = client.request("{}?{}&in_reply_to_status_id={}".format(
+            post_url, encoded_msg, tweet_id
         ), method="POST")
 
         return response, data
@@ -113,7 +119,7 @@ class Bot:
             tweets = utils.toJSON(tweets)
 
             for tweet in tweets:
-                tweet_id, tweet_text, tweet_time, coordinates = self.analyze_tweet_data(tweet)
+                tweet_id, tweet_text, tweet_time, coordinates, username = self.analyze_tweet_data(tweet)
                 if tweet_id > self.last_id:
                     self.last_id = tweet_id
 
@@ -131,11 +137,13 @@ class Bot:
 
                     msg = ""
                     if coordinates:
-                        msg = "Created reminder using geolocation for UTC {}, delete tweet to cancel."
+                        msg = "{} Created reminder using geolocation for UTC {}, delete tweet to cancel."
                     else:
-                        msg = "Created reminder for UTC {}, delete tweet to cancel. (Warning: Tweet location was off, time may be different from your timezone)"
-                    formatted_msg = msg.format(tweet_time)
-                    self.reply_tweet(tweet_id, formatted_msg)
+                        msg = "{} Created reminder for UTC {}, delete tweet to cancel. (Warning: Tweet location was off, time may be different from your timezone)"
+                    formatted_msg = msg.format(username, tweet_time)
+                    print(formatted_msg)
+                    response, data = self.reply_tweet(tweet_id, formatted_msg)
+                    # print(response, "\n\n", data)
 
             t.sleep(15)
 
@@ -143,8 +151,9 @@ class Bot:
     def remind(self):
         while True:
             # Select due reminders
-            self.cur.execute("SELECT id, reminder FROM Tweets WHERE now() > due;")
+            self.cur.execute("SELECT id, reminder FROM Tweets WHERE current_timestamp > due;")
             due_tweets = self.cur.fetchall()
+            self.conn.commit()
 
             for tweet in due_tweets:
                 tweet_id = tweet[0]
@@ -155,9 +164,11 @@ class Bot:
                 response, data = client.request("https://api.twitter.com/1.1/statuses/show.json?id=" + str(tweet_id))
                 data = utils.toJSON(data)
                 if "errors" in data: # if error in data tweet was deleted
+                    print("Reminder {} was deleted".format(tweet_msg))
                     self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
                     self.conn.commit()
                 else:
+                    print("Sending reminder {}".format(tweet_msg))
                     msg = "Reminder: {}".format(tweet_msg)
                     response, data = self.reply_tweet(tweet_id, msg)
                     if response.status == 200:

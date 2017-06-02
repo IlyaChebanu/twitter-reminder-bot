@@ -38,12 +38,11 @@ def get_maps_key(conn):
 # converts day month (year) date to YYYY-MM-DD
 def convert_date(date):
     # separate numbers with spaces eg: 02 07 2017
-    date = re.sub("[-./]", " ", date[0])
-    try:
-        # Will fail if year was not passed
-        date = datetime.strptime(date, "%d %m %Y")
-    except:
-        date = datetime.strptime(date, "%d %m")
+    date = re.sub("[-./]", " ", date)
+    print("Subbed ", date)
+    if date.count(" ") == 1: # If one space, year wasn't passed
+        date = "{} {}".format(date, datetime.utcnow().year)
+    date = datetime.strptime(date, "%d %m %Y").date()
     return str(date)
 
 def toJSON(msg):
