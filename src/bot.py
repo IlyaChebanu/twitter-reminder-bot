@@ -1,8 +1,11 @@
 import re, threading
 import time as t
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from urllib.parse import urlencode
 import utils
+
+MENTION_URL = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
+POST_URL = "https://api.twitter.com/1.1/statuses/update.json"
 
 class Bot:
     def __init__(self, conn=None):
@@ -27,112 +30,111 @@ class Bot:
 
 
     def analyze_tweet_data(self, tweet):
-        remind_pattern = r'\[.+\]'
+        username_pattern = r'@[-_a-zA-Z0-9]+\b\s'
         time_pattern = r'\b(?:[01]{0,1}\d|2[0-4]):[0-5]\d\b'
         date_pattern = r'\b(?:[0-2]{0,1}\d|3[01])[-./](?:0{0,1}\d|1[0-2])(?:[-./]20[1-9]\d|)\b'
 
         tweet_id = tweet['id']
         tweet_text = tweet['text']
+        tweet_text = re.sub(username_pattern, '', tweet_text) # Delete bot username
 
-        # Find the username
+        # Find the username of person who requested a reminder
         username = "@" + tweet['user']['screen_name']
-        # username = re.findall(username_pattern, tweet_text)[0]
-
-        # Find text enclosed in brackets
-        # if tweet does not contain it an exception is thrown (indexing None)
-        reminder = re.findall(remind_pattern, tweet_text)
-        if reminder:
-            reminder = reminder[0].strip("[").strip("]").strip() # Strip the brackets
-            reminder = username + " " + reminder # Add the username to the reminder
+        tweet_text = username + ' Reminder: ' + tweet_text
+        due_datetime = None # Remains none if a time wasn't passed
 
         # Find the date
         due_date = re.findall(date_pattern, tweet_text)
-        if not due_date: # If date was omitted
-            due_date = str(datetime.utcnow().date()) # Use today's date
-        else:
-            due_date = utils.convert_date(due_date[0])
+        if due_date:
+            due_date = utils.convert_date(due_date[0]) # convert to timestamp format
 
         # Find the time
-        due_datetime = None # Remains none if a time wasn't passed
         due_time = re.findall(time_pattern, tweet_text)
         if due_time:
             due_time = due_time[0]
-            if due_time.count(":") == 1: # if only one : in time, seconds were omitted
-                due_time = due_time + ":00"
-            # Convert to postgresql timestamp format
-            due_datetime = "{} {}".format(due_date, due_time)
-
-
 
         # Get coordinates for the timezone offset
         has_coordinates = False
-        coordinates = tweet['place']['bounding_box']['coordinates']
-        if coordinates:
-            print(due_datetime)
-            due_datetime = self.utc_time(coordinates[0][0], due_datetime)
+        try: # Fails if geolocation was off
+            coordinates = tweet['place']['bounding_box']['coordinates']
+            if not due_date: # If date was omitted use local date
+                due_date = self.get_local_date(coordinates[0][0])
+            if due_time:
+                due_datetime = "{} {}".format(due_date, due_time)
+                due_datetime = self.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
+        except:
+            pass
 
-        return tweet_id, reminder, due_datetime, has_coordinates, username
+        return tweet_id, tweet_text, due_datetime, has_coordinates, username
 
-
-    def utc_time(self, coord, time):
+    def get_tz_offset(self, coord):
         timestamp = t.time()
         client = utils.oauth_client(*utils.get_credentials(self.conn))
 
         # Maps API timezone data request
-        response, tz = client.request(
-            "{}?location={},{}&timestamp={}&key={}".format(
-                utils.TZ_URL, coord[1], coord[0], timestamp, utils.get_maps_key(self.conn)
-            )
-        )
+        params = "?" + urlencode({
+            'location': "{},{}".format(coord[1], coord[0]),
+            'timestamp': timestamp,
+            'key': utils.get_maps_key(self.conn)
+        })
+        response, tz = client.request(utils.TZ_URL + params)
         tz = utils.toJSON(tz)
 
-        tz_offset = tz['dstOffset'] + tz['rawOffset']
+        return tz['dstOffset'] + tz['rawOffset']
 
-        offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M:%S")
+    def utc_time(self, coord, time):
+        tz_offset = self.get_tz_offset(coord)
+
+        offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M")
         offset_time -= timedelta(seconds=tz_offset)
 
-        return str(offset_time)
+        return datetime.strftime(offset_time, "%Y-%m-%d %H:%M")
+
+    def get_local_date(self, coord):
+        tz_offset = self.get_tz_offset(coord)
+
+        time = datetime.utcnow()
+        time += timedelta(seconds=tz_offset)
+
+        return str(time.date())
+
 
 
     def reply_tweet(self, tweet_id, msg):
-        post_url = "https://api.twitter.com/1.1/statuses/update.json"
-
-        encoded_msg = urlencode({"status": msg})
-
         client = utils.oauth_client(*utils.get_credentials(self.conn))
-        response, data = client.request("{}?{}&in_reply_to_status_id={}".format(
-            post_url, encoded_msg, tweet_id
-        ), method="POST")
 
+        params = "?" + urlencode({
+            "in_reply_to_status_id": tweet_id,
+            "status": msg
+        })
+        response, data = client.request(POST_URL + params, method="POST")
         return response, data
 
 
     def listen(self):
         while True:
-            mention_url = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
             client = utils.oauth_client(*utils.get_credentials(self.conn))
             # Get all new mentions
-            response, tweets = client.request("{}?since_id={}".format(
-                mention_url, self.last_id + 1
-            ))
+            params = "?" + urlencode({"since_id": self.last_id + 1})
+            response, tweets = client.request(MENTION_URL + params)
             tweets = utils.toJSON(tweets)
 
             for tweet in tweets:
-                tweet_id, tweet_text, tweet_time, coordinates, username = self.analyze_tweet_data(tweet)
+                tweet_id, reminder_text, reminder_time, coordinates, username = self.analyze_tweet_data(tweet)
                 if tweet_id > self.last_id:
                     self.last_id = tweet_id
 
-                if not tweet_text or not tweet_time:
-                    continue # Skip the tweet if text or time wasn't passed
+                if not reminder_time:
+                    continue # Skip the tweet if time wasn't passed
 
                 time_now = datetime.utcnow()
                 # Convert to datetime format for comparison
-                requested_time = datetime.strptime(tweet_time, "%Y-%m-%d %H:%M:%S")
+                requested_time = datetime.strptime(reminder_time, "%Y-%m-%d %H:%M")
 
                 if requested_time > time_now: # Prevent reminders for the past
                     self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
-                        (tweet_id, tweet_text, tweet_time))
+                        (tweet_id, reminder_text, reminder_time))
                     self.conn.commit()
 
                     msg = ""
@@ -140,10 +142,9 @@ class Bot:
                         msg = "{} Created reminder using geolocation for UTC {}, delete tweet to cancel."
                     else:
                         msg = "{} Created reminder for UTC {}, delete tweet to cancel. (Warning: Tweet location was off, time may be different from your timezone)"
-                    formatted_msg = msg.format(username, tweet_time)
+                    formatted_msg = msg.format(username, reminder_time)
                     print(formatted_msg)
-                    response, data = self.reply_tweet(tweet_id, formatted_msg)
-                    # print(response, "\n\n", data)
+                    self.reply_tweet(tweet_id, formatted_msg)
 
             t.sleep(15)
 
@@ -159,18 +160,18 @@ class Bot:
                 tweet_id = tweet[0]
                 tweet_msg = tweet[1]
 
-                client = utils.oauth_client(*utils.get_credentials(self.conn))
                 # Check if tweet still exists
+                client = utils.oauth_client(*utils.get_credentials(self.conn))
                 response, data = client.request("https://api.twitter.com/1.1/statuses/show.json?id=" + str(tweet_id))
                 data = utils.toJSON(data)
+
                 if "errors" in data: # if error in data tweet was deleted
-                    print("Reminder {} was deleted".format(tweet_msg))
+                    print("Reminder \"{}\" was deleted".format(tweet_msg))
                     self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
                     self.conn.commit()
                 else:
-                    print("Sending reminder {}".format(tweet_msg))
-                    msg = "Reminder: {}".format(tweet_msg)
-                    response, data = self.reply_tweet(tweet_id, msg)
+                    print("Sending reminder: {}".format(tweet_msg))
+                    response, data = self.reply_tweet(tweet_id, tweet_msg)
                     if response.status == 200:
                         self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
                         self.conn.commit()
