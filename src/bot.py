@@ -15,10 +15,12 @@ class Bot:
         self.cur.execute("CREATE TABLE IF NOT EXISTS \
                           Tweets(id BIGINT NOT NULL, \
                                  reminder VARCHAR NOT NULL, \
-                                 due TIMESTAMP NOT NULL);")
+                                 due TIMESTAMP NOT NULL); \
+                          CREATE TABLE IF NOT EXISTS \
+                          TweetIDs(id BIGINT NOT NULL);")
 
         # Get last reminder ID so listener doesn't pull tweets already in db
-        self.cur.execute("SELECT Max(id) FROM Tweets;")
+        self.cur.execute("SELECT Max(id) FROM TweetIDs;")
         query_result = self.cur.fetchone()[0]
 
         if query_result:
@@ -139,6 +141,7 @@ class Bot:
                 if requested_time > time_now: # Prevent reminders for the past
                     self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
                         (tweet_id, reminder_text, reminder_time))
+                    self.cur.execute("INSERT INTO TweetIDs VALUES (%s);", (tweet_id,))
                     self.conn.commit()
 
                     msg = ""
