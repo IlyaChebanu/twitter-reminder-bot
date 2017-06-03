@@ -64,7 +64,11 @@ class Bot:
                 due_datetime = self.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
         except:
-            pass
+            # If a time was passed, but date wasn't, and coordinates are off:
+            if not due_date and due_time:
+                # use current UTC date
+                due_date = str(datetime.utcnow().date())
+                due_datetime = "{} {}".format(due_date, due_time)
 
         return tweet_id, tweet_text, due_datetime, has_coordinates, username
 
