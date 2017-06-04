@@ -12,6 +12,7 @@ def input_credentials():
     return username, consumer_key, consumer_secret, access_token, access_secret, maps_key
 
 def initial_setup():
+    conn = establish_db_connection()
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS \
         Credentials(Name VARCHAR NOT NULL, \
@@ -22,11 +23,12 @@ def initial_setup():
     cursor.execute("INSERT INTO Credentials VALUES (%s, %s, %s, %s, %s, %s);", input_credentials())
     conn.commit()
     cursor.close()
+    conn.close()
     start_bot()
 
 def start_bot():
     print("Starting bot")
-    bot = Bot(conn)
+    bot = Bot()
     bot.run()
 
 def main():
@@ -34,7 +36,6 @@ def main():
     parser.add_argument('--login', action='store_true')
     args = parser.parse_args()
 
-    global conn
     conn = establish_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT EXISTS (\
@@ -42,6 +43,8 @@ def main():
         WHERE table_name = 'credentials' \
     );")
     num_tables = cursor.fetchone()[0]
+    cursor.close()
+    conn.close()
 
     if not num_tables or args.login:
         initial_setup()

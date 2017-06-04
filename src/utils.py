@@ -3,8 +3,6 @@ import psycopg2, oauth2, json
 from urllib.parse import urlparse
 from datetime import datetime
 
-TZ_URL = 'https://maps.googleapis.com/maps/api/timezone/json'
-
 def establish_db_connection():
     url = urlparse(os.environ["DATABASE_URL"])
 
@@ -23,16 +21,22 @@ def oauth_client(consumer_key, consumer_secret, access_token, access_secret):
     client = oauth2.Client(consumer, token)
     return client
 
-def get_credentials(conn):
+def get_credentials():
+    conn = establish_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT ConsumerKey, ConsumerSecret, AccessToken, AccessSecret FROM Credentials;")
     query_result = cursor.fetchone()
+    cursor.close()
+    conn.close()
     return query_result
 
-def get_maps_key(conn):
+def get_maps_key():
+    conn = establish_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT MapsKey FROM Credentials;")
     query_result = cursor.fetchone()[0]
+    cursor.close()
+    conn.close()
     return query_result
 
 # converts day month (year) date to YYYY-MM-DD
