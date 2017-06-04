@@ -144,10 +144,9 @@ class Bot:
                 requested_time = datetime.strptime(reminder_time, "%Y-%m-%d %H:%M")
 
                 if requested_time > time_now: # Prevent reminders for the past
-                    reminder_text = reminder_text.encode("utf-8")
-                    self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);",
-                        (tweet_id, reminder_text, reminder_time))
-                    self.cur.execute("INSERT INTO TweetIDs VALUES (%s);", (tweet_id,))
+                    self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);\
+                                      INSERT INTO TweetIDs VALUES (%s);",
+                        (tweet_id, reminder_text, reminder_time, tweet_id))
                     self.conn.commit()
 
                     msg = ""
@@ -171,7 +170,7 @@ class Bot:
 
             for tweet in due_tweets:
                 tweet_id = tweet[0]
-                tweet_msg = tweet[1].decode("utf-8")
+                tweet_msg = tweet[1]
 
                 # Check if tweet still exists
                 client = utils.oauth_client(*utils.get_credentials())
