@@ -1,7 +1,10 @@
-import os, re
-import psycopg2, oauth2, json
-from urllib.parse import urlparse
-from datetime import datetime
+import os, re, httplib2, json
+import psycopg2, oauth2
+from urllib.parse import urlparse, urlencode
+from datetime import datetime, timedelta
+import time as t
+
+TZ_URL = 'https://maps.googleapis.com/maps/api/timezone/json'
 
 def establish_db_connection():
     url = urlparse(os.environ["DATABASE_URL"])
@@ -39,6 +42,9 @@ def get_maps_key():
     conn.close()
     return query_result
 
+def toJSON(msg):
+    return json.loads(msg.decode('latin-1'))
+
 # converts day month (year) date to YYYY-MM-DD
 def convert_date(date):
     date = re.split("[-./]", date)
@@ -47,5 +53,35 @@ def convert_date(date):
     date = date[::-1] # Reverse list so year is 1st
     return "-".join(date)
 
-def toJSON(msg):
-    return json.loads(msg.decode('latin-1'))
+# returns offset from UTC in seconds
+def get_tz_offset(coord):
+    timestamp = t.time()
+    client = httplib2.Http()
+
+    # Maps API timezone data request
+    params = "?" + urlencode({
+        'location': "{},{}".format(coord[1], coord[0]),
+        'timestamp': timestamp,
+        'key': get_maps_key()
+    })
+    response, tz = client.request(TZ_URL + params, headers={'connection': 'close'})
+    tz = toJSON(tz)
+
+    return tz['dstOffset'] + tz['rawOffset']
+
+# converts local time to utc time
+def utc_time(coord, time):
+    tz_offset = get_tz_offset(coord)
+
+    offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M")
+    offset_time -= timedelta(seconds=tz_offset)
+
+    return datetime.strftime(offset_time, "%Y-%m-%d %H:%M")
+
+def get_local_date(coord):
+    tz_offset = get_tz_offset(coord)
+
+    time = datetime.utcnow()
+    time += timedelta(seconds=tz_offset)
+
+    return str(time.date())

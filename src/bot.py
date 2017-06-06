@@ -6,7 +6,6 @@ import utils
 
 MENTION_URL = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
 POST_URL = "https://api.twitter.com/1.1/statuses/update.json"
-TZ_URL = 'https://maps.googleapis.com/maps/api/timezone/json'
 
 class Bot:
     def __init__(self):
@@ -43,43 +42,8 @@ class Bot:
         response, data = client.request(POST_URL + params, method="POST")
         return response, data
 
-
     @staticmethod
-    def get_tz_offset(coord):
-        timestamp = t.time()
-        client = utils.oauth_client(*utils.get_credentials())
-
-        # Maps API timezone data request
-        params = "?" + urlencode({
-            'location': "{},{}".format(coord[1], coord[0]),
-            'timestamp': timestamp,
-            'key': utils.get_maps_key()
-        })
-        response, tz = client.request(TZ_URL + params)
-        tz = utils.toJSON(tz)
-
-        return tz['dstOffset'] + tz['rawOffset']
-
-
-    def utc_time(self, coord, time):
-        tz_offset = self.get_tz_offset(coord)
-
-        offset_time = datetime.strptime(time, "%Y-%m-%d %H:%M")
-        offset_time -= timedelta(seconds=tz_offset)
-
-        return datetime.strftime(offset_time, "%Y-%m-%d %H:%M")
-
-
-    def get_local_date(self, coord):
-        tz_offset = self.get_tz_offset(coord)
-
-        time = datetime.utcnow()
-        time += timedelta(seconds=tz_offset)
-
-        return str(time.date())
-
-
-    def analyze_tweet_data(self, tweet):
+    def analyze_tweet_data(tweet):
         username_pattern = r'@[-_a-zA-Z0-9]+\b\s'
         time_pattern = r'\b(?:[01]{0,1}\d|2[0-4]):[0-5]\d\b'
         date_pattern = r'\b(?:[0-2]{0,1}\d|3[01])[-./](?:0{0,1}\d|1[0-2])(?:[-./]20[1-9]\d|)\b'
@@ -108,10 +72,10 @@ class Bot:
         try: # Fails if geolocation was off
             coordinates = tweet['place']['bounding_box']['coordinates']
             if not due_date: # If date was omitted use local date
-                due_date = self.get_local_date(coordinates[0][0])
+                due_date = utils.get_local_date(coordinates[0][0])
             if due_time:
                 due_datetime = "{} {}".format(due_date, due_time)
-                due_datetime = self.utc_time(coordinates[0][0], due_datetime)
+                due_datetime = utils.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
         except:
             # If a time was passed, but date wasn't, and coordinates are off:
