@@ -3,24 +3,21 @@ from bot import Bot
 from utils import *
 
 def input_credentials():
-    username = input("Bot username: ").strip()
     consumer_key = input("Consumer key: ").strip()
     consumer_secret = input("Consumer secret: ").strip()
     access_token = input("Access token: ").strip()
     access_secret = input("Access secret: ").strip()
-    maps_key = input("Google Maps API key: ").strip()
-    return username, consumer_key, consumer_secret, access_token, access_secret, maps_key
+    return consumer_key, consumer_secret, access_token, access_secret
 
 def initial_setup():
     conn = establish_db_connection()
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS \
-        Credentials(Name VARCHAR NOT NULL, \
+        Credentials(\
         ConsumerKey VARCHAR NOT NULL, ConsumerSecret VARCHAR NOT NULL, \
-        AccessToken VARCHAR NOT NULL, AccessSecret VARCHAR NOT NULL, \
-        MapsKey VARCHAR NOT NULL);")
+        AccessToken VARCHAR NOT NULL, AccessSecret VARCHAR NOT NULL);")
     cursor.execute("TRUNCATE TABLE Credentials;")
-    cursor.execute("INSERT INTO Credentials VALUES (%s, %s, %s, %s, %s, %s);", input_credentials())
+    cursor.execute("INSERT INTO Credentials VALUES (%s, %s, %s, %s);", input_credentials())
     conn.commit()
     cursor.close()
     conn.close()

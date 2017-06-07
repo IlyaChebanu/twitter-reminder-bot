@@ -27,20 +27,12 @@ def oauth_client(consumer_key, consumer_secret, access_token, access_secret):
 def get_credentials():
     conn = establish_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT ConsumerKey, ConsumerSecret, AccessToken, AccessSecret FROM Credentials;")
+    cursor.execute("SELECT * FROM Credentials;")
     query_result = cursor.fetchone()
     cursor.close()
     conn.close()
     return query_result
 
-def get_maps_key():
-    conn = establish_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT MapsKey FROM Credentials;")
-    query_result = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
-    return query_result
 
 def toJSON(msg):
     return json.loads(msg.decode('latin-1'))
@@ -62,7 +54,7 @@ def get_tz_offset(coord):
     params = "?" + urlencode({
         'location': "{},{}".format(coord[1], coord[0]),
         'timestamp': timestamp,
-        'key': get_maps_key()
+        'key': "AIzaSyC40RWwQJbqOt9UpfbzZsUW5GwyKChfv_I"
     })
     response, tz = client.request(TZ_URL + params, headers={'connection': 'close'})
     tz = toJSON(tz)
