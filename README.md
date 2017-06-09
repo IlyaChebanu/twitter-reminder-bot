@@ -2,7 +2,7 @@
 
 Code that powers the [@createreminder](https://twitter.com/createreminder) twitter bot.
 
-To update the credentials use `python main.py --login`
+To update the credentials use `python src\main.py --login`
 
 ## How to use the bot:
 Turn tweet location on to use your local timezone, else UTC is assumed.
