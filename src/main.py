@@ -2,12 +2,14 @@ import argparse
 from bot import Bot
 from utils import *
 
+
 def input_credentials():
     consumer_key = input("Consumer key: ").strip()
     consumer_secret = input("Consumer secret: ").strip()
     access_token = input("Access token: ").strip()
     access_secret = input("Access secret: ").strip()
     return consumer_key, consumer_secret, access_token, access_secret
+
 
 def initial_setup():
     conn = establish_db_connection()
@@ -23,10 +25,12 @@ def initial_setup():
     conn.close()
     start_bot()
 
+
 def start_bot():
     print("Starting bot")
     bot = Bot()
     bot.run()
+
 
 def main():
     parser = argparse.ArgumentParser(description='Twitter reminder bot.')

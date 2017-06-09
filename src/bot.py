@@ -1,11 +1,13 @@
-import re, threading
+import re
+import threading
 import time as t
+import utils
 from datetime import datetime, timedelta, tzinfo
 from urllib.parse import urlencode
-import utils
 
 MENTION_URL = "https://api.twitter.com/1.1/statuses/mentions_timeline.json"
 POST_URL = "https://api.twitter.com/1.1/statuses/update.json"
+
 
 class Bot:
     def __init__(self):
@@ -30,7 +32,6 @@ class Bot:
 
         self.conn.commit()
 
-
     @staticmethod
     def reply_tweet(tweet_id, msg):
         client = utils.oauth_client(*utils.get_credentials())
@@ -50,17 +51,17 @@ class Bot:
 
         tweet_id = tweet['id']
         tweet_text = tweet['text']
-        tweet_text = re.sub(username_pattern, '', tweet_text) # Delete bot username
+        tweet_text = re.sub(username_pattern, '', tweet_text)  # Delete bot username
 
         # Find the username of person who requested a reminder
         username = "@" + tweet['user']['screen_name']
         tweet_text = username + ' Reminder: ' + tweet_text
-        due_datetime = None # Remains none if a time wasn't passed
+        due_datetime = None  # Remains none if a time wasn't passed
 
         # Find the date
         due_date = re.findall(date_pattern, tweet_text)
         if due_date:
-            due_date = utils.convert_date(due_date[0]) # convert to timestamp format
+            due_date = utils.convert_date(due_date[0])  # convert to timestamp format
 
         # Find the time
         due_time = re.findall(time_pattern, tweet_text)
@@ -69,15 +70,15 @@ class Bot:
 
         # Get coordinates for the timezone offset
         has_coordinates = False
-        try: # Fails if geolocation was off
+        try:  # Fails if geolocation was off
             coordinates = tweet['place']['bounding_box']['coordinates']
-            if not due_date: # If date was omitted use local date
+            if not due_date:  # If date was omitted use local date
                 due_date = utils.get_local_date(coordinates[0][0])
             if due_time:
                 due_datetime = "{} {}".format(due_date, due_time)
                 due_datetime = utils.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
-        except:
+        except KeyError:
             # If a time was passed, but date wasn't, and coordinates are off:
             if not due_date and due_time:
                 # use current UTC date
@@ -85,7 +86,6 @@ class Bot:
                 due_datetime = "{} {}".format(due_date, due_time)
 
         return tweet_id, tweet_text, due_datetime, has_coordinates, username
-
 
     def listen(self):
         while True:
@@ -101,29 +101,28 @@ class Bot:
                     self.last_id = tweet_id
 
                 if not reminder_time:
-                    continue # Skip the tweet if time wasn't passed
+                    continue  # Skip the tweet if time wasn't passed
 
                 time_now = datetime.utcnow()
                 # Convert to datetime format for comparison
                 requested_time = datetime.strptime(reminder_time, "%Y-%m-%d %H:%M")
 
-                if requested_time > time_now: # Prevent reminders for the past
+                if requested_time > time_now:  # Prevent reminders for the past
                     self.cur.execute("INSERT INTO Tweets VALUES (%s, %s, %s);\
                                       INSERT INTO TweetIDs VALUES (%s);",
-                        (tweet_id, reminder_text, reminder_time, tweet_id))
+                                     (tweet_id, reminder_text, reminder_time, tweet_id))
                     self.conn.commit()
 
-                    msg = ""
                     if coordinates:
                         msg = "{} Created reminder using geolocation for UTC {}, delete tweet to cancel."
                     else:
-                        msg = "{} Created reminder for UTC {}, delete tweet to cancel. (Warning: Tweet location was off, time may be different from your timezone)"
+                        msg = "{} Created reminder for UTC {}, delete tweet to cancel. \
+                              (Warning: Tweet location was off, time may be different from your timezone)"
                     formatted_msg = msg.format(username, reminder_time)
                     print(formatted_msg)
                     self.reply_tweet(tweet_id, formatted_msg)
 
             t.sleep(15)
-
 
     def remind(self):
         while True:
@@ -141,7 +140,7 @@ class Bot:
                 response, data = client.request("https://api.twitter.com/1.1/statuses/show.json?id=" + str(tweet_id))
                 data = utils.toJSON(data)
 
-                if "errors" in data: # if error in data tweet was deleted
+                if "errors" in data:  # if error in data tweet was deleted
                     print("Reminder \"{}\" was deleted".format(tweet_msg).encode('utf-8'))
                     self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
                     self.conn.commit()
@@ -152,7 +151,6 @@ class Bot:
                         self.cur.execute("DELETE FROM Tweets WHERE id=(%s);", (tweet_id,))
                         self.conn.commit()
             t.sleep(30)
-
 
     def run(self):
         # Thread the two functions to concurrently
@@ -165,4 +163,4 @@ class Bot:
         remind_thread.start()
 
         while True:
-            pass # Prevent the program from closing itself immediately
+            pass  # Prevent the program from closing itself immediately
