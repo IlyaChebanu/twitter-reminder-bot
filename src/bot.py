@@ -78,7 +78,7 @@ class Bot:
                 due_datetime = "{} {}".format(due_date, due_time)
                 due_datetime = utils.utc_time(coordinates[0][0], due_datetime)
             has_coordinates = True
-        except(KeyError, NoneType):
+        except(KeyError, TypeError):
             # If a time was passed, but date wasn't, and coordinates are off:
             if not due_date and due_time:
                 # use current UTC date
