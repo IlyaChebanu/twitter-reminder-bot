@@ -116,8 +116,7 @@ class Bot:
                     if coordinates:
                         msg = "{} Created reminder using geolocation for UTC {}, delete tweet to cancel."
                     else:
-                        msg = "{} Created reminder for UTC {}, delete tweet to cancel. \
-                              (Warning: Tweet location was off, time may be different from your timezone)"
+                        msg = "{} Created reminder for UTC {}, delete tweet to cancel. (Location was off, timezone may be incorrect)"
                     formatted_msg = msg.format(username, reminder_time)
                     print(formatted_msg)
                     self.reply_tweet(tweet_id, formatted_msg)
